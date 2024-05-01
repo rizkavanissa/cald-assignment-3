@@ -1,0 +1,6 @@
+make.sh
+./src/output-error
+./src/output-iftest
+./src/output-latencytest
+./src/output-standardtest
+hlsyn
