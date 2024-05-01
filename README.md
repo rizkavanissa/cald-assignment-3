@@ -37,3 +37,9 @@ This program converts a C-like behavioral description into a scheduled one-proce
 5. Rizka Vanissa Alifia
 - Developing filter, input store data, including reading file
 - Documentation of the program
+
+
+# Note for Running the Program
+During program execution, the error "Error: Performed ALAP scheduling failed" will appear in terminal after each conversion of verilog have been created.
+![error_behaviour](https://github.com/rizkavanissa/cald-assignment-3/assets/78137303/83082820-a253-4180-893a-90b6ab4946b0)
+However, it doesn't affect the result and we still get output as expected. 
