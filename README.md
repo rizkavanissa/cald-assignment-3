@@ -17,21 +17,23 @@ This program converts a C-like behavioral description into a scheduled one-proce
 
 # Contribution of each group member to the assignment:
 1. Brandon John Lim Yung Chen
-- Developing the dpgen.cpp
-- Developing Store separate net
+- Developing generation of HLSM and it's behaviour
+- Nesting if and else statement
+- Handling the LIST_R scheduling
 
 2. Moh Erwin Septianto 
-- Developing Setters
-- Testing the code
+- Developing basic idea of ALAP scheduling
+- Testing the code in ECE3
 
 3. Muhammad Nafis Aimanurrohman
 - Debugging the program
-- Developing the Getters
+- Providing feedback output in case of error happen
+- Testing in verilog
 
 4. Pieter Timothy
-- Developing the output part
+- Developing the output part, including file formating
 - CMake file
 
 5. Rizka Vanissa Alifia
-- Developing filter and store input
+- Developing filter, input store data, including reading file
 - Documentation of the program
