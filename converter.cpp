@@ -1,8 +1,15 @@
-#include "../includes/hlsm.h"
-#include "../includes/scheduler.h"
+#include <cmath>
+#include "converter.h"
+#include "cdfg.h"
 
-HLSM::HLSM() {}
+HLSM::HLSM() // Default constructor
+{
+    this->count = 0;
+    this->error = false;
+    this->justExited = false;
+}
 
+// Clean the predecessor nodes of the operations
 void HLSM::cleanPredecessors(std::vector<Operation *> ops)
 {
     for (Operation *op : ops)
@@ -18,6 +25,7 @@ void HLSM::cleanPredecessors(std::vector<Operation *> ops)
     }
 }
 
+// Tokenize a string line into a separate word strings
 std::vector<std::string> HLSM::parseLine(std::string line)
 {
     std::vector<std::string> out;
@@ -27,229 +35,239 @@ std::vector<std::string> HLSM::parseLine(std::string line)
 
     while (stream)
     {
-        std::string temp;
-        stream >> temp;
-        if (temp.size() > 0)
+        std::string temp;       // Store the word token
+        stream >> temp;         // Extract the first or next token
+
+        if (temp.size() > 0)    // Check if the token is not empty
         {
-            char last = temp[temp.length() - 1];
-            if (last == ',')
+            char last = temp[temp.length() - 1];    // Get the last character of the current word token
+
+            if (last == ',') // Chekc if this last character is a comma character (e.g., "a," from the line "input UInt8 a, b, c")
             {
-                temp = temp.substr(0, temp.size() - 1);
+                temp = temp.substr(0, temp.size() - 1); // Extract only the alphabetic character(s)
             }
-            out.push_back(temp);
+            out.push_back(temp); // Push the current word token into the "out" string vector
         }
     }
 
-    return out;
+    return out; // Reutrn the string vector of the clean tokenized line
 }
 
-int HLSM::processFile(const std::string &fileName, const std::string &outputName, int latency)
+void HLSM::parseInput(std::ifstream& inFile, int latency)
 {
-    std::ifstream inFile(fileName);
-    if (!inFile)
-    {
-        std::cerr << "Unable to open file " << fileName << "\n";
-        return 1;
-    }
+    count = 0; // Store ID of operation
 
-    std::ofstream verilogFile(outputName);
-    if (!verilogFile)
-    {
-        std::cerr << "Unable to open file " << outputName << "\n";
-        return 1;
-    }
-
-    count = 0;
-    currentLineIndex = 0;
-
+    // Push the memory addresses of inop and onop (although it has not been initialized yet) into the vector of operations
     operations.push_back(&inop);
     operations.push_back(&onop);
+
     lastIf = NULL;
 
     error = false;
     justExited = false;
 
-    while (!inFile.eof())
+    while (!inFile.eof()) // Iterate through each line in the input file
     {
-        if (std::getline(inFile, currentLine) && !error)
+        if (std::getline(inFile, currentLine) && !error)    // Get the next line of the input file and check if any error occurred in the previous line
         {
-            currentLineIndex++;
-            std::vector<std::string> words = HLSM::parseLine(currentLine);
-            if (words.size() < 1)
+            if (!currentLine.empty()) // Skip over empty lines
             {
-                // Do nothing...
-            }
-            else if (words.at(0).compare("}") == 0)
-            {
-                justExited = true;
-                lastIf = inIfs.back();
-                inIfs.pop_back();
-            }
-            else if (words.at(0).compare("else") == 0)
-            {
-                count++;
-                if (justExited)
+                if (currentLine.find("//") != std::string::npos)
                 {
+                    std::cout << "Comment found: " << currentLine << std::endl;
+                    // exit(1);
+                }
+
+                std::vector<std::string> words = HLSM::parseLine(currentLine); // Tokenize each word of a line
+
+                if (words.size() < 1)
+                {
+                    // Do nothing...
+                }
+                else if (words.at(0).compare("}") == 0) // Check whether the first word  of the line is a closing curly brace
+                {
+                    justExited = true;
+                    lastIf = inIfs.back();
+                    inIfs.pop_back();
+                }
+                // Check whether the first word of the line is for an else statement
+                else if (words.at(0).compare("else") == 0)
+                {
+                    count++; // Increment count to get new ID
+                    
+                    if (justExited)
+                    {
+                        Operation *tempOp = new Operation(words, variables, inIfs, count, lastIf, operations);
+                        inIfs.push_back(tempOp);
+                        operations.push_back(tempOp);
+                        justExited = false;
+                    }
+                    else
+                    {
+                        std::cerr << "Error: Else without corresponding If" << std::endl;
+                    }
+                }
+                else if (words.size() < 3)
+                {
+                    // Do nothing...
+                }
+                // // Handles the data element typefrom the input file
+                else if (words.size() > 2 && (words.at(0).compare("input") == 0 || 
+                                            words.at(0).compare("output") == 0 || 
+                                            words.at(0).compare("variable") == 0)
+                        )
+                {
+                    for (int i = 2; i < words.size(); i++)
+                    {
+                        Variable *tempVar = new Variable(words, i, &inop, &onop);
+                        variables.push_back(tempVar);
+                        justExited = false;
+                    }
+                }
+                // Handles the operations from the input file
+                else if (words.at(1).compare("=") == 0)
+                {
+                    count++; // Increment count to get new ID
+
+                    Operation *tempOp = new Operation(words, variables, inIfs, count, lastIf, operations);
+                    operations.push_back(tempOp);
+                    justExited = false;
+                }
+                // Handles the conditional if statement from the input file
+                else if (words.at(0).compare("if") == 0 &&
+                        words.at(1).compare("(") == 0 &&
+                        words.at(3).compare(")") == 0 &&
+                        words.at(4).compare("{") == 0)
+                {
+                    count++; // Increment count to get new ID
+
                     Operation *tempOp = new Operation(words, variables, inIfs, count, lastIf, operations);
                     inIfs.push_back(tempOp);
                     operations.push_back(tempOp);
                     justExited = false;
                 }
-                else
-                {
-                    std::cerr << "Error: Else without corresponding If" << std::endl;
-                }
-            }
-            else if (words.size() < 3)
-            {
-                // Do nothing...
-            }
-            else if (words.at(0).compare(0, 2, "//") == 0)
-            {
-                // Do nothing...
-            }
-            else if (words.size() > 2 && (words.at(0).compare("input") == 0 ||
-                                          words.at(0).compare("output") == 0 ||
-                                          words.at(0).compare("variable") ==
-                                              0))
-            {
-                for (int i = 2; i < words.size(); i++)
-                {
-                    if (words.at(i).compare(0, 2, "//") == 0)
-                        break;
-
-                    Variable *tempVar = new Variable(words, i, &inop, &onop);
-                    variables.push_back(tempVar);
-                    justExited = false;
-                }
-            }
-            else if (words.at(1).compare("=") == 0)
-            {
-                count++;
-
-                Operation *tempOp = new Operation(words, variables, inIfs, count, lastIf, operations);
-                operations.push_back(tempOp);
-                justExited = false;
-            }
-            else if (words.at(0).compare("if") == 0 &&
-                     words.at(1).compare("(") == 0 &&
-                     words.at(3).compare(")") == 0 &&
-                     words.at(4).compare("{") == 0)
-            {
-                count++;
-                Operation *tempOp = new Operation(words, variables, inIfs, count, lastIf, operations);
-                inIfs.push_back(tempOp);
-                operations.push_back(tempOp);
-                justExited = false;
             }
         }
     }
 
-    cleanPredecessors(operations);
+    return; // Return true if no errors occurred during parsing
+}
 
-    setALAPS(operations, latency);
-    List_R(operations, latency);
-
-    verilogFile << "`timescale 1ns / 1ps\n\n";
-    verilogFile << "module HLSM (Clk, Rst, Start, Done"; // MODULE START
+// Write the conversion result to the specified verilog file
+void HLSM::writeToVerilog(std::ifstream& inFile, std::ofstream& outFile, const std::string &outName, int latency)
+{
+    outFile << "`timescale 1ns / 1ps\n\n";
+    outFile << "module HLSM (Clk, Rst, Start, Done"; // MODULE START
+    // Specify the data elements in the module's parameter
     for (int i = 0; i < variables.size(); i++)
     {
         if (variables.at(i)->type == 0 || variables.at(i)->type == 1)
         {
-            verilogFile << ", " << variables.at(i)->name;
+            outFile << ", " << variables.at(i)->name;
         }
     }
+    outFile << ");" << std::endl;
 
-    verilogFile << ");" << std::endl;
-    verilogFile << "    input Clk, Rst, Start;" << std::endl; // INPUT START
+    outFile << "    input Clk, Rst, Start;" << std::endl; // INPUT START
 
+    // Print the inputs
     for (int i = 0; i < variables.size(); i++)
     {
         if (variables.at(i)->type == 0)
         {
-            verilogFile << "    input ";
+            outFile << "    input ";
             if (variables.at(i)->sign)
             {
-                verilogFile << "signed ";
+                outFile << "signed ";
             }
             if (variables.at(i)->width > 1)
             {
-                verilogFile << "[" << variables.at(i)->width - 1 << ":0] ";
+                outFile << "[" << variables.at(i)->width - 1 << ":0] ";
             }
-            verilogFile << variables.at(i)->name << "; " << std::endl;
+            outFile << variables.at(i)->name << "; " << std::endl;
         }
     }
 
-    verilogFile << "    output reg Done;" << std::endl; // OUTPUT START
+    outFile << "    output reg Done;" << std::endl; // OUTPUT START
+
+    // Print the outputs
     for (int i = 0; i < variables.size(); i++)
     {
         if (variables.at(i)->type == 1)
         {
-            verilogFile << "    output reg ";
+            outFile << "    output reg ";
             if (variables.at(i)->sign)
             {
-                verilogFile << "signed ";
+                outFile << "signed ";
             }
             if (variables.at(i)->width > 1)
             {
-                verilogFile << "[" << variables.at(i)->width - 1 << ":0] ";
+                outFile << "[" << variables.at(i)->width - 1 << ":0] ";
             }
-            verilogFile << variables.at(i)->name << "; " << std::endl;
+            outFile << variables.at(i)->name << "; " << std::endl;
         }
     }
 
+    // Print the registers/variables
     for (int i = 0; i < variables.size(); i++)
     {
         if (variables.at(i)->type == 2)
         {
-            verilogFile << "    reg ";
+            outFile << "    reg ";
             if (variables.at(i)->sign)
             {
-                verilogFile << "signed ";
+                outFile << "signed ";
             }
             if (variables.at(i)->width > 1)
             {
-                verilogFile << "[" << variables.at(i)->width - 1 << ":0] ";
+                outFile << "[" << variables.at(i)->width - 1 << ":0] ";
             }
-            verilogFile << variables.at(i)->name << "; " << std::endl;
+            outFile << variables.at(i)->name << "; " << std::endl;
         }
     }
-    verilogFile << "    reg [" << ceil(log(latency) / log(2)) - 1 << ":0] State;"
+
+    outFile << "    reg [" << ceil(log(latency) / log(2)) - 1 << ":0] State;"
                 << std::endl;
 
-    verilogFile << "    parameter Wait = 0, Final = 1, ";
+    outFile << "    parameter Wait = 0, Final = 1, ";
+
+    // Print the cycle time of the states of the operations
     for (int i = 0; i < (latency); i++)
     {
-        verilogFile << "S" << i << " = " << i + 2;
+        outFile << "S" << i << " = " << i + 2;
         if (i != latency - 1)
         {
-            verilogFile << ", ";
+            outFile << ", ";
         }
         else
         {
-            verilogFile << ";" << std::endl;
+            outFile << ";" << std::endl;
         }
     }
-    verilogFile << "\n    always @(posedge Clk) begin" << std::endl;
-    verilogFile << "        if (Rst == 1) begin" << std::endl
+
+    // Print the statements for the positive clock edge
+    outFile << "\n    always @(posedge Clk) begin" << std::endl;
+    outFile << "        if (Rst == 1) begin" << std::endl
                 << "            Done <= 0;" << std::endl
                 << "            State <= Wait;" << std::endl
                 << "        end" << std::endl;
-    verilogFile << "        else begin" << std::endl;
-    verilogFile << "            case(State)" << std::endl;
-    verilogFile << "                Wait: begin" << std::endl;
-    verilogFile << "                    Done <= 0;" << std::endl;
-    verilogFile << "                    if (Start == 1) begin" << std::endl;
-    verilogFile << "                        State <= S0;" << std::endl;
-    verilogFile << "                    end" << std::endl;
-    verilogFile << "                    else begin" << std::endl;
-    verilogFile << "                        State <= Wait;" << std::endl;
-    verilogFile << "                    end" << std::endl
+    outFile << "        else begin" << std::endl;
+    outFile << "            case(State)" << std::endl;
+    outFile << "                Wait: begin" << std::endl;
+    outFile << "                    Done <= 0;" << std::endl;
+    outFile << "                    if (Start == 1) begin" << std::endl;
+    outFile << "                        State <= S0;" << std::endl;
+    outFile << "                    end" << std::endl;
+    outFile << "                    else begin" << std::endl;
+    outFile << "                        State <= Wait;" << std::endl;
+    outFile << "                    end" << std::endl
                 << "                end" << std::endl;
+
+    // Print the states of the operations
     for (int i = 1; i < latency + 1; i++)
     {
         // output case
-        verilogFile << "                S" << i - 1 << ": begin" << std::endl;
+        outFile << "                S" << i - 1 << ": begin" << std::endl;
         for (int j = 0; j < operations.size(); j++)
         {
             if ((operations.at(j)->scheduledState == i) &&
@@ -258,58 +276,58 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                 switch (operations.at(j)->type)
                 {
                 case 0: // REG
-                    verilogFile << "//REG";
+                    outFile << "//REG";
                     break;
                 case 1: // ADD
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << operations.at(j)->outputs.at(0)->name
                                 << " <= ";
-                    verilogFile << operations.at(j)->inputs.at(0)->name
+                    outFile << operations.at(j)->inputs.at(0)->name
                                 << " + ";
-                    verilogFile << operations.at(j)->inputs.at(1)->name
+                    outFile << operations.at(j)->inputs.at(1)->name
                                 << ";";
                     break;
                 case 2: // SUB
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << operations.at(j)->outputs.at(0)->name
                                 << " <= ";
-                    verilogFile << operations.at(j)->inputs.at(0)->name
+                    outFile << operations.at(j)->inputs.at(0)->name
                                 << " - ";
-                    verilogFile << operations.at(j)->inputs.at(1)->name
+                    outFile << operations.at(j)->inputs.at(1)->name
                                 << ";";
                     break;
                 case 3: // MUL
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << operations.at(j)->outputs.at(0)->name
                                 << " <= ";
-                    verilogFile << operations.at(j)->inputs.at(0)->name
+                    outFile << operations.at(j)->inputs.at(0)->name
                                 << " * ";
-                    verilogFile << operations.at(j)->inputs.at(1)->name
+                    outFile << operations.at(j)->inputs.at(1)->name
                                 << ";";
                     break;
                 case 4: // COMP
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << "if ("
                                 << operations.at(j)->inputs.at(0)->name;
                     if (operations.at(j)->compType == 0)
                     {
-                        verilogFile << " < ";
+                        outFile << " < ";
                     }
                     if (operations.at(j)->compType == 1)
                     {
-                        verilogFile << " > ";
+                        outFile << " > ";
                     }
                     if (operations.at(j)->compType == 2)
                     {
-                        verilogFile << " == ";
+                        outFile << " == ";
                     }
-                    verilogFile << operations.at(j)->inputs.at(1)->name
+                    outFile << operations.at(j)->inputs.at(1)->name
                                 << ") begin" << std::endl;
-                    verilogFile << "                        "
+                    outFile << "                        "
                                 << operations.at(j)->outputs.at(0)->name
                                 << " <= 1;" << std::endl
                                 << "                    end" << std::endl;
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << "else begin" << std::endl
                                 << "                        "
                                 << operations.at(j)->outputs.at(0)->name
@@ -317,36 +335,36 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                 << "                    end";
                     break;
                 case 5: // MUX
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << operations.at(j)->outputs.at(0)->name
                                 << " <= (";
-                    verilogFile << operations.at(j)->inputs.at(0)->name
+                    outFile << operations.at(j)->inputs.at(0)->name
                                 << ")?";
-                    verilogFile << operations.at(j)->inputs.at(1)->name
+                    outFile << operations.at(j)->inputs.at(1)->name
                                 << ":";
-                    verilogFile << operations.at(j)->inputs.at(2)->name
+                    outFile << operations.at(j)->inputs.at(2)->name
                                 << ";";
                     break;
                 case 6: // SHR
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << operations.at(j)->outputs.at(0)->name
                                 << " <= ";
-                    verilogFile << operations.at(j)->inputs.at(0)->name
+                    outFile << operations.at(j)->inputs.at(0)->name
                                 << " >> ";
-                    verilogFile << operations.at(j)->inputs.at(1)->name
+                    outFile << operations.at(j)->inputs.at(1)->name
                                 << ";";
                     break;
                 case 7: // SHL
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << operations.at(j)->outputs.at(0)->name
                                 << " <= ";
-                    verilogFile << operations.at(j)->inputs.at(0)->name
+                    outFile << operations.at(j)->inputs.at(0)->name
                                 << " << ";
-                    verilogFile << operations.at(j)->inputs.at(1)->name
+                    outFile << operations.at(j)->inputs.at(1)->name
                                 << ";";
                     break;
-                case 8: // IF x1
-                    verilogFile << "                    "
+                case 8: // HANDLE THE FIRST IF STATEMENT
+                    outFile << "                    "
                                 << "if ("
                                 << operations.at(j)->inputs.at(0)->name
                                 << ") begin" << std::endl;
@@ -363,7 +381,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                     operations.at(k)->type != 9 &&
                                     operations.at(k)->type != 4)
                                 {
-                                    verilogFile << "                        "
+                                    outFile << "                        "
                                                 << operations.at(k)
                                                        ->outputs
                                                        .at(0)
@@ -371,54 +389,54 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 << " <= ";
                                     if (operations.at(k)->type == 5)
                                     {
-                                        verilogFile << "(";
+                                        outFile << "(";
                                     }
-                                    verilogFile << operations.at(k)
+                                    outFile << operations.at(k)
                                                        ->inputs
                                                        .at(0)
                                                        ->name;
                                     if (operations.at(k)->type == 5)
                                     {
-                                        verilogFile << ")?";
+                                        outFile << ")?";
                                     }
                                     switch (operations.at(k)->type)
                                     {
                                     case 1:
-                                        verilogFile << " + ";
+                                        outFile << " + ";
                                         break;
                                     case 2:
-                                        verilogFile << " - ";
+                                        outFile << " - ";
                                         break;
                                     case 3:
-                                        verilogFile << " * ";
+                                        outFile << " * ";
                                         break;
                                     case 6:
-                                        verilogFile << " >> ";
+                                        outFile << " >> ";
                                         break;
                                     case 7:
-                                        verilogFile << " << ";
+                                        outFile << " << ";
                                         break;
                                     default:
-                                        verilogFile << "0 //";
+                                        outFile << "0 //";
                                         break;
                                     }
-                                    verilogFile << operations.at(k)
+                                    outFile << operations.at(k)
                                                        ->inputs
                                                        .at(1)
                                                        ->name;
                                     if (operations.at(k)->type == 5)
                                     {
-                                        verilogFile << ":"
+                                        outFile << ":"
                                                     << operations.at(k)
                                                            ->inputs
                                                            .at(2)
                                                            ->name;
                                     }
-                                    verilogFile << ";" << std::endl;
+                                    outFile << ";" << std::endl;
                                 }
                                 else if (operations.at(k)->type == 4)
                                 { // COMP
-                                    verilogFile << "                    "
+                                    outFile << "                    "
                                                 << "if ("
                                                 << operations.at(k)
                                                        ->inputs
@@ -426,26 +444,26 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                        ->name;
                                     if (operations.at(k)->compType == 0)
                                     {
-                                        verilogFile << " < ";
+                                        outFile << " < ";
                                     }
                                     if (operations.at(k)->compType == 1)
                                     {
-                                        verilogFile << " > ";
+                                        outFile << " > ";
                                     }
                                     if (operations.at(k)->compType == 2)
                                     {
-                                        verilogFile << " == ";
+                                        outFile << " == ";
                                     }
-                                    verilogFile
+                                    outFile
                                         << operations.at(k)->inputs.at(1)->name
                                         << ") begin" << std::endl;
-                                    verilogFile << operations.at(k)
+                                    outFile << operations.at(k)
                                                        ->outputs
                                                        .at(0)
                                                        ->name
                                                 << " <= 1;" << std::endl
                                                 << "end" << std::endl;
-                                    verilogFile << "else begin" << std::endl
+                                    outFile << "else begin" << std::endl
                                                 << operations.at(k)
                                                        ->outputs
                                                        .at(0)
@@ -454,8 +472,8 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 << "end" << std::endl;
                                 }
                                 else if (operations.at(k)->type == 8)
-                                { // IF x2
-                                    verilogFile
+                                { // HANDLE FOR THE SECOND IF STATEMENT OR NESTED IF STATEMENT
+                                    outFile
                                         << "                        "
                                         << "if ("
                                         << operations.at(k)->inputs.at(0)->name
@@ -473,7 +491,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                     operations.at(l)->type != 9 &&
                                                     operations.at(l)->type != 4)
                                                 {
-                                                    verilogFile << "                            "
+                                                    outFile << "                            "
                                                                 << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
@@ -481,41 +499,41 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                 << " <= ";
                                                     if (operations.at(l)->type == 5)
                                                     {
-                                                        verilogFile << "(";
+                                                        outFile << "(";
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(0)
                                                                        ->name;
                                                     if (operations.at(l)->type == 5)
                                                     {
-                                                        verilogFile << ")?";
+                                                        outFile << ")?";
                                                     }
                                                     switch (operations.at(l)->type)
                                                     {
                                                     case 1:
-                                                        verilogFile << " + ";
+                                                        outFile << " + ";
                                                         break;
                                                     case 2:
-                                                        verilogFile << " - ";
+                                                        outFile << " - ";
                                                         break;
                                                     case 3:
-                                                        verilogFile << " * ";
+                                                        outFile << " * ";
                                                         break;
                                                     case 5:
-                                                        verilogFile << ":";
+                                                        outFile << ":";
                                                         break;
                                                     case 6:
-                                                        verilogFile << " >> ";
+                                                        outFile << " >> ";
                                                         break;
                                                     case 7:
-                                                        verilogFile << " << ";
+                                                        outFile << " << ";
                                                         break;
                                                     default:
-                                                        verilogFile << "0 //";
+                                                        outFile << "0 //";
                                                         break;
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(1)
                                                                        ->name
@@ -524,7 +542,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 else if (operations.at(l)->type ==
                                                          4)
                                                 { // COMP
-                                                    verilogFile << "                            "
+                                                    outFile << "                            "
                                                                 << "if ("
                                                                 << operations.at(l)
                                                                        ->inputs
@@ -533,29 +551,29 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                     if (operations.at(l)->compType ==
                                                         0)
                                                     {
-                                                        verilogFile << " < ";
+                                                        outFile << " < ";
                                                     }
                                                     if (operations.at(l)->compType ==
                                                         1)
                                                     {
-                                                        verilogFile << " > ";
+                                                        outFile << " > ";
                                                     }
                                                     if (operations.at(l)->compType ==
                                                         2)
                                                     {
-                                                        verilogFile << " == ";
+                                                        outFile << " == ";
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(1)
                                                                        ->name
                                                                 << ") begin" << std::endl;
-                                                    verilogFile << "                        "
+                                                    outFile << "                        "
                                                                 << operations.at(l)->outputs.at(0)->name
                                                                 << " <= 1;" << std::endl
                                                                 << "                        "
                                                                 << "end" << std::endl;
-                                                    verilogFile << "else begin" << std::endl
+                                                    outFile << "else begin" << std::endl
                                                                 << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
@@ -566,9 +584,9 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 }
                                                 else if (operations.at(l)->type ==
                                                          8)
-                                                { // IF x3
+                                                { // HANDLE FOR THE THIRD NESTED IF STATEMENT
                                                     // FIXME
-                                                    verilogFile
+                                                    outFile
                                                         << "                        "
                                                         << "if ("
                                                         << operations.at(l)
@@ -596,7 +614,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                     operations.at(m)
                                                                             ->type != 4)
                                                                 {
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->outputs
                                                                                .at(0)
@@ -605,9 +623,9 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                     if (operations.at(m)
                                                                             ->type == 5)
                                                                     {
-                                                                        verilogFile << "(";
+                                                                        outFile << "(";
                                                                     }
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->inputs
                                                                                .at(0)
@@ -615,34 +633,34 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                     if (operations.at(m)
                                                                             ->type == 5)
                                                                     {
-                                                                        verilogFile << ")?";
+                                                                        outFile << ")?";
                                                                     }
                                                                     switch (operations.at(m)
                                                                                 ->type)
                                                                     {
                                                                     case 1:
-                                                                        verilogFile << " + ";
+                                                                        outFile << " + ";
                                                                         break;
                                                                     case 2:
-                                                                        verilogFile << " - ";
+                                                                        outFile << " - ";
                                                                         break;
                                                                     case 3:
-                                                                        verilogFile << " * ";
+                                                                        outFile << " * ";
                                                                         break;
                                                                     case 5:
-                                                                        verilogFile << ":";
+                                                                        outFile << ":";
                                                                         break;
                                                                     case 6:
-                                                                        verilogFile << " >> ";
+                                                                        outFile << " >> ";
                                                                         break;
                                                                     case 7:
-                                                                        verilogFile << " << ";
+                                                                        outFile << " << ";
                                                                         break;
                                                                     default:
-                                                                        verilogFile << "0 //";
+                                                                        outFile << "0 //";
                                                                         break;
                                                                     }
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->inputs
                                                                                .at(1)
@@ -653,7 +671,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                              ->type ==
                                                                          4)
                                                                 { // COMP
-                                                                    verilogFile
+                                                                    outFile
                                                                         << "if ("
                                                                         << operations.at(m)
                                                                                ->inputs
@@ -663,34 +681,34 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                             ->compType ==
                                                                         0)
                                                                     {
-                                                                        verilogFile << " < ";
+                                                                        outFile << " < ";
                                                                     }
                                                                     if (operations.at(m)
                                                                             ->compType ==
                                                                         1)
                                                                     {
-                                                                        verilogFile << " > ";
+                                                                        outFile << " > ";
                                                                     }
                                                                     if (operations.at(m)
                                                                             ->compType ==
                                                                         2)
                                                                     {
-                                                                        verilogFile << " == ";
+                                                                        outFile << " == ";
                                                                     }
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->inputs
                                                                                .at(1)
                                                                                ->name
                                                                         << ") begin" << std::endl;
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->outputs
                                                                                .at(0)
                                                                                ->name
                                                                         << " <= 1;" << std::endl
                                                                         << "end" << std::endl;
-                                                                    verilogFile
+                                                                    outFile
                                                                         << "else begin" << std::endl
                                                                         << operations.at(m)
                                                                                ->outputs
@@ -702,48 +720,48 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                 else if (operations.at(m)
                                                                              ->type ==
                                                                          8)
-                                                                { // IF x4
-                                                                    verilogFile << "if (1) begin"
+                                                                { // HANDLE FOR THE FOURTH NESTED IF STATEMENT
+                                                                    outFile << "if (1) begin"
                                                                                 << std::endl;
                                                                     // FIXME
                                                                     // FIXME
-                                                                    verilogFile << "end" << std::endl;
+                                                                    outFile << "end" << std::endl;
                                                                 }
                                                                 else if (operations.at(m)
                                                                              ->type ==
                                                                          9)
                                                                 { // ELSE x4
-                                                                    verilogFile << "else begin"
+                                                                    outFile << "else begin"
                                                                                 << std::endl;
                                                                     // FIXME
                                                                     // FIXME
-                                                                    verilogFile << "end" << std::endl;
+                                                                    outFile << "end" << std::endl;
                                                                 }
                                                             }
                                                         }
                                                     }
-                                                    verilogFile << "end" << std::endl;
+                                                    outFile << "end" << std::endl;
                                                     // FIXME
                                                 }
                                                 else if (operations.at(l)->type ==
                                                          9)
                                                 { // ELSE x3
-                                                    verilogFile << "else begin" << std::endl;
+                                                    outFile << "else begin" << std::endl;
                                                     // FIXME
                                                     // FIXME
-                                                    verilogFile << "end" << std::endl;
+                                                    outFile << "end" << std::endl;
                                                 }
                                             }
                                         }
                                     }
 
-                                    verilogFile
+                                    outFile
                                         << "                        " << "end" << std::endl;
                                 }
                                 else if (operations.at(k)->type == 9)
                                 { // ELSE
                                   // x2
-                                    verilogFile
+                                    outFile
                                         << "                        " << "else begin" << std::endl;
                                     for (int l = 0; l < operations.size(); l++)
                                     {
@@ -760,46 +778,46 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                     operations.at(l)->type != 9 &&
                                                     operations.at(l)->type != 4)
                                                 {
-                                                    verilogFile
+                                                    outFile
                                                         << "                            " << operations.at(l)->outputs.at(0)->name
                                                         << " <= ";
                                                     if (operations.at(l)->type == 5)
                                                     {
-                                                        verilogFile << "(";
+                                                        outFile << "(";
                                                     }
-                                                    verilogFile
+                                                    outFile
                                                         << operations.at(l)
                                                                ->inputs.at(0)
                                                                ->name;
                                                     if (operations.at(l)->type == 5)
                                                     {
-                                                        verilogFile << ")?";
+                                                        outFile << ")?";
                                                     }
                                                     switch (operations.at(l)->type)
                                                     {
                                                     case 1:
-                                                        verilogFile << " + ";
+                                                        outFile << " + ";
                                                         break;
                                                     case 2:
-                                                        verilogFile << " - ";
+                                                        outFile << " - ";
                                                         break;
                                                     case 3:
-                                                        verilogFile << " * ";
+                                                        outFile << " * ";
                                                         break;
                                                     case 5:
-                                                        verilogFile << ":";
+                                                        outFile << ":";
                                                         break;
                                                     case 6:
-                                                        verilogFile << " >> ";
+                                                        outFile << " >> ";
                                                         break;
                                                     case 7:
-                                                        verilogFile << " << ";
+                                                        outFile << " << ";
                                                         break;
                                                     default:
-                                                        verilogFile << "0 //";
+                                                        outFile << "0 //";
                                                         break;
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(1)
                                                                        ->name
@@ -808,7 +826,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 else if (operations.at(l)->type ==
                                                          4)
                                                 { // COMP
-                                                    verilogFile
+                                                    outFile
                                                         << "                        " << "if ("
                                                         << operations.at(l)
                                                                ->inputs
@@ -817,30 +835,30 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                     if (operations.at(l)->compType ==
                                                         0)
                                                     {
-                                                        verilogFile << " < ";
+                                                        outFile << " < ";
                                                     }
                                                     if (operations.at(l)->compType ==
                                                         1)
                                                     {
-                                                        verilogFile << " > ";
+                                                        outFile << " > ";
                                                     }
                                                     if (operations.at(l)->compType ==
                                                         2)
                                                     {
-                                                        verilogFile << " == ";
+                                                        outFile << " == ";
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(1)
                                                                        ->name
                                                                 << ") begin" << std::endl;
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
                                                                        ->name
                                                                 << " <= 1;" << std::endl
                                                                 << "end" << std::endl;
-                                                    verilogFile << "else begin" << std::endl
+                                                    outFile << "else begin" << std::endl
                                                                 << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
@@ -852,7 +870,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                          8)
                                                 { // IF x3
                                                     // FIXME
-                                                    verilogFile
+                                                    outFile
                                                         << "                            " << "if ("
                                                         << operations.at(l)
                                                                ->inputs
@@ -879,16 +897,16 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                     operations.at(m)
                                                                             ->type != 4)
                                                                 {
-                                                                    verilogFile
+                                                                    outFile
                                                                         << "                                "
                                                                         << operations.at(m)->outputs.at(0)->name
                                                                         << " <= ";
                                                                     if (operations.at(m)
                                                                             ->type == 5)
                                                                     {
-                                                                        verilogFile << "(";
+                                                                        outFile << "(";
                                                                     }
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->inputs
                                                                                .at(0)
@@ -896,34 +914,34 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                     if (operations.at(m)
                                                                             ->type == 5)
                                                                     {
-                                                                        verilogFile << ")?";
+                                                                        outFile << ")?";
                                                                     }
                                                                     switch (operations.at(m)
                                                                                 ->type)
                                                                     {
                                                                     case 1:
-                                                                        verilogFile << " + ";
+                                                                        outFile << " + ";
                                                                         break;
                                                                     case 2:
-                                                                        verilogFile << " - ";
+                                                                        outFile << " - ";
                                                                         break;
                                                                     case 3:
-                                                                        verilogFile << " * ";
+                                                                        outFile << " * ";
                                                                         break;
                                                                     case 5:
-                                                                        verilogFile << ":";
+                                                                        outFile << ":";
                                                                         break;
                                                                     case 6:
-                                                                        verilogFile << " >> ";
+                                                                        outFile << " >> ";
                                                                         break;
                                                                     case 7:
-                                                                        verilogFile << " << ";
+                                                                        outFile << " << ";
                                                                         break;
                                                                     default:
-                                                                        verilogFile << "0 //";
+                                                                        outFile << "0 //";
                                                                         break;
                                                                     }
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->inputs
                                                                                .at(1)
@@ -934,7 +952,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                              ->type ==
                                                                          4)
                                                                 { // COMP
-                                                                    verilogFile
+                                                                    outFile
                                                                         << "                                "
                                                                         << "if ("
                                                                         << operations.at(m)
@@ -945,27 +963,27 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                             ->compType ==
                                                                         0)
                                                                     {
-                                                                        verilogFile << " < ";
+                                                                        outFile << " < ";
                                                                     }
                                                                     if (operations.at(m)
                                                                             ->compType ==
                                                                         1)
                                                                     {
-                                                                        verilogFile << " > ";
+                                                                        outFile << " > ";
                                                                     }
                                                                     if (operations.at(m)
                                                                             ->compType ==
                                                                         2)
                                                                     {
-                                                                        verilogFile << " == ";
+                                                                        outFile << " == ";
                                                                     }
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->inputs
                                                                                .at(1)
                                                                                ->name
                                                                         << ") begin" << std::endl;
-                                                                    verilogFile
+                                                                    outFile
                                                                         << operations.at(m)
                                                                                ->outputs
                                                                                .at(0)
@@ -973,7 +991,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                         << " <= 1;" << std::endl
                                                                         << "                                "
                                                                         << "end" << std::endl;
-                                                                    verilogFile
+                                                                    outFile
                                                                         << "else begin" << std::endl
                                                                         << operations.at(m)
                                                                                ->outputs
@@ -987,50 +1005,50 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                                              ->type ==
                                                                          8)
                                                                 { // IF x4
-                                                                    verilogFile << "if (1) begin"
+                                                                    outFile << "if (1) begin"
                                                                                 << std::endl;
                                                                     // FIXME
                                                                     // FIXME
-                                                                    verilogFile << "end" << std::endl;
+                                                                    outFile << "end" << std::endl;
                                                                 }
                                                                 else if (operations.at(m)
                                                                              ->type ==
                                                                          9)
                                                                 { // ELSE x4
-                                                                    verilogFile << "else begin"
+                                                                    outFile << "else begin"
                                                                                 << std::endl;
                                                                     // FIXME
                                                                     // FIXME
-                                                                    verilogFile << "end" << std::endl;
+                                                                    outFile << "end" << std::endl;
                                                                 }
                                                             }
                                                         }
                                                     }
-                                                    verilogFile << "                            " << "end" << std::endl;
+                                                    outFile << "                            " << "end" << std::endl;
                                                     // FIXME
                                                 }
                                                 else if (operations.at(l)->type ==
                                                          9)
                                                 { // ELSE x3
-                                                    verilogFile << "else begin" << std::endl;
+                                                    outFile << "else begin" << std::endl;
                                                     // FIXME
                                                     // FIXME
-                                                    verilogFile << "                    " << "end" << std::endl;
+                                                    outFile << "                    " << "end" << std::endl;
                                                 }
                                             }
                                         }
                                     }
                                     // FIXME
-                                    verilogFile << "                            "
+                                    outFile << "                            "
                                                 << "end" << std::endl;
                                 }
                             }
                         }
                     }
-                    verilogFile << "                        " << "end";
+                    outFile << "                        " << "end";
                     break;
                 case 9: // ELSE x1
-                    verilogFile << "else begin" << std::endl;
+                    outFile << "else begin" << std::endl;
                     for (int k = 0; k < operations.size(); k++)
                     {
                         for (int l = 0; l < operations.at(k)->inIfs.size();
@@ -1044,89 +1062,89 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                     operations.at(k)->type != 9 &&
                                     operations.at(k)->type != 4)
                                 {
-                                    verilogFile << operations.at(k)
+                                    outFile << operations.at(k)
                                                        ->outputs
                                                        .at(0)
                                                        ->name
                                                 << " <= ";
                                     if (operations.at(k)->type == 5)
                                     {
-                                        verilogFile << "(";
+                                        outFile << "(";
                                     }
-                                    verilogFile << operations.at(k)
+                                    outFile << operations.at(k)
                                                        ->inputs
                                                        .at(0)
                                                        ->name;
                                     if (operations.at(k)->type == 5)
                                     {
-                                        verilogFile << ")?";
+                                        outFile << ")?";
                                     }
                                     switch (operations.at(k)->type)
                                     {
                                     case 1:
-                                        verilogFile << " + ";
+                                        outFile << " + ";
                                         break;
                                     case 2:
-                                        verilogFile << " - ";
+                                        outFile << " - ";
                                         break;
                                     case 3:
-                                        verilogFile << " * ";
+                                        outFile << " * ";
                                         break;
                                     case 5:
                                         break;
                                     case 6:
-                                        verilogFile << " >> ";
+                                        outFile << " >> ";
                                         break;
                                     case 7:
-                                        verilogFile << " << ";
+                                        outFile << " << ";
                                         break;
                                     default:
-                                        verilogFile << "0 //";
+                                        outFile << "0 //";
                                         break;
                                     }
-                                    verilogFile << operations.at(k)
+                                    outFile << operations.at(k)
                                                        ->inputs
                                                        .at(1)
                                                        ->name;
                                     if (operations.at(k)->type == 5)
                                     {
-                                        verilogFile << ":"
+                                        outFile << ":"
                                                     << operations.at(k)
                                                            ->inputs
                                                            .at(2)
                                                            ->name;
                                     }
-                                    verilogFile << ";" << std::endl;
+                                    outFile << ";" << std::endl;
                                 }
                                 else if (operations.at(k)->type == 4)
                                 { // COMP
-                                    verilogFile << "if ("
+                                    outFile << "if ("
                                                 << operations.at(k)
                                                        ->inputs
                                                        .at(0)
                                                        ->name;
                                     if (operations.at(k)->compType == 0)
                                     {
-                                        verilogFile << " < ";
+                                        outFile << " < ";
                                     }
                                     if (operations.at(k)->compType == 1)
                                     {
-                                        verilogFile << " > ";
+                                        outFile << " > ";
                                     }
                                     if (operations.at(k)->compType == 2)
                                     {
-                                        verilogFile << " == ";
+                                        outFile << " == ";
                                     }
-                                    verilogFile
+                                    outFile
                                         << operations.at(k)->inputs.at(1)->name
                                         << ") begin" << std::endl;
-                                    verilogFile << operations.at(k)
+                                    outFile << operations.at(k)
                                                        ->outputs
                                                        .at(0)
                                                        ->name
                                                 << " <= 1;" << std::endl
                                                 << "end" << std::endl;
-                                    verilogFile << "else begin" << std::endl
+                                    outFile << "else begin" << std::endl
                                                 << operations.at(k)
                                                        ->outputs
                                                        .at(0)
@@ -1136,7 +1154,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                 }
                                 else if (operations.at(k)->type == 8)
                                 { // IF x2
-                                    verilogFile
+                                    outFile
                                         << "if ("
                                         << operations.at(k)->inputs.at(0)->name
                                         << ") begin" << std::endl;
@@ -1153,48 +1171,48 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                     operations.at(l)->type != 9 &&
                                                     operations.at(l)->type != 4)
                                                 {
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
                                                                        ->name
                                                                 << " <= ";
                                                     if (operations.at(l)->type == 5)
                                                     {
-                                                        verilogFile << "(";
+                                                        outFile << "(";
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(0)
                                                                        ->name;
                                                     if (operations.at(l)->type == 5)
                                                     {
-                                                        verilogFile << ")?";
+                                                        outFile << ")?";
                                                     }
                                                     switch (operations.at(l)->type)
                                                     {
                                                     case 1:
-                                                        verilogFile << " + ";
+                                                        outFile << " + ";
                                                         break;
                                                     case 2:
-                                                        verilogFile << " - ";
+                                                        outFile << " - ";
                                                         break;
                                                     case 3:
-                                                        verilogFile << " * ";
+                                                        outFile << " * ";
                                                         break;
                                                     case 5:
-                                                        verilogFile << ":";
+                                                        outFile << ":";
                                                         break;
                                                     case 6:
-                                                        verilogFile << " >> ";
+                                                        outFile << " >> ";
                                                         break;
                                                     case 7:
-                                                        verilogFile << " << ";
+                                                        outFile << " << ";
                                                         break;
                                                     default:
-                                                        verilogFile << "0 //";
+                                                        outFile << "0 //";
                                                         break;
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(1)
                                                                        ->name
@@ -1203,7 +1221,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 else if (operations.at(l)->type ==
                                                          4)
                                                 { // COMP
-                                                    verilogFile << "if ("
+                                                    outFile << "if ("
                                                                 << operations.at(l)
                                                                        ->inputs
                                                                        .at(0)
@@ -1211,30 +1229,30 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                     if (operations.at(l)->compType ==
                                                         0)
                                                     {
-                                                        verilogFile << " < ";
+                                                        outFile << " < ";
                                                     }
                                                     if (operations.at(l)->compType ==
                                                         1)
                                                     {
-                                                        verilogFile << " > ";
+                                                        outFile << " > ";
                                                     }
                                                     if (operations.at(l)->compType ==
                                                         2)
                                                     {
-                                                        verilogFile << " == ";
+                                                        outFile << " == ";
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(1)
                                                                        ->name
                                                                 << ") begin" << std::endl;
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
                                                                        ->name
                                                                 << " <= 1;" << std::endl
                                                                 << "end" << std::endl;
-                                                    verilogFile << "else begin" << std::endl
+                                                    outFile << "else begin" << std::endl
                                                                 << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
@@ -1245,28 +1263,28 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 else if (operations.at(l)->type ==
                                                          8)
                                                 { // IF x3
-                                                    verilogFile << "if (1) begin" << std::endl;
+                                                    outFile << "if (1) begin" << std::endl;
                                                     // FIXME
                                                     // FIXME
-                                                    verilogFile << "end" << std::endl;
+                                                    outFile << "end" << std::endl;
                                                 }
                                                 else if (operations.at(l)->type ==
                                                          9)
                                                 { // ELSE x3
-                                                    verilogFile << "else begin" << std::endl;
+                                                    outFile << "else begin" << std::endl;
                                                     // FIXME
                                                     // FIXME
-                                                    verilogFile << "end" << std::endl;
+                                                    outFile << "end" << std::endl;
                                                 }
                                             }
                                         }
                                     }
-                                    verilogFile << "end" << std::endl;
+                                    outFile << "end" << std::endl;
                                 }
                                 else if (operations.at(k)->type == 9)
                                 { // ELSE
                                   // x2
-                                    verilogFile << "else begin" << std::endl;
+                                    outFile << "else begin" << std::endl;
                                     for (int l = 0; l < operations.size(); l++)
                                     {
                                         for (int m = 0;
@@ -1280,48 +1298,48 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                     operations.at(l)->type != 9 &&
                                                     operations.at(l)->type != 4)
                                                 {
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
                                                                        ->name
                                                                 << " <= ";
                                                     if (operations.at(l)->type == 5)
                                                     {
-                                                        verilogFile << "(";
+                                                        outFile << "(";
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(0)
                                                                        ->name;
                                                     if (operations.at(l)->type == 5)
                                                     {
-                                                        verilogFile << ")?";
+                                                        outFile << ")?";
                                                     }
                                                     switch (operations.at(l)->type)
                                                     {
                                                     case 1:
-                                                        verilogFile << " + ";
+                                                        outFile << " + ";
                                                         break;
                                                     case 2:
-                                                        verilogFile << " - ";
+                                                        outFile << " - ";
                                                         break;
                                                     case 3:
-                                                        verilogFile << " * ";
+                                                        outFile << " * ";
                                                         break;
                                                     case 5:
-                                                        verilogFile << ":";
+                                                        outFile << ":";
                                                         break;
                                                     case 6:
-                                                        verilogFile << " >> ";
+                                                        outFile << " >> ";
                                                         break;
                                                     case 7:
-                                                        verilogFile << " << ";
+                                                        outFile << " << ";
                                                         break;
                                                     default:
-                                                        verilogFile << "0 //";
+                                                        outFile << "0 //";
                                                         break;
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(1)
                                                                        ->name
@@ -1330,7 +1348,7 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 else if (operations.at(l)->type ==
                                                          4)
                                                 { // COMP
-                                                    verilogFile << "if ("
+                                                    outFile << "if ("
                                                                 << operations.at(l)
                                                                        ->inputs
                                                                        .at(0)
@@ -1338,30 +1356,30 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                     if (operations.at(l)->compType ==
                                                         0)
                                                     {
-                                                        verilogFile << " < ";
+                                                        outFile << " < ";
                                                     }
                                                     if (operations.at(l)->compType ==
                                                         1)
                                                     {
-                                                        verilogFile << " > ";
+                                                        outFile << " > ";
                                                     }
                                                     if (operations.at(l)->compType ==
                                                         2)
                                                     {
-                                                        verilogFile << " == ";
+                                                        outFile << " == ";
                                                     }
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->inputs
                                                                        .at(1)
                                                                        ->name
                                                                 << ") begin" << std::endl;
-                                                    verilogFile << operations.at(l)
+                                                    outFile << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
                                                                        ->name
                                                                 << " <= 1;" << std::endl
                                                                 << "end" << std::endl;
-                                                    verilogFile << "else begin" << std::endl
+                                                    outFile << "else begin" << std::endl
                                                                 << operations.at(l)
                                                                        ->outputs
                                                                        .at(0)
@@ -1372,65 +1390,68 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                                                 else if (operations.at(l)->type ==
                                                          8)
                                                 { // IF x3
-                                                    verilogFile << "if (1) begin" << std::endl;
+                                                    outFile << "if (1) begin" << std::endl;
                                                     // FIXME
                                                     // FIXME
-                                                    verilogFile << "end" << std::endl;
+                                                    outFile << "end" << std::endl;
                                                 }
                                                 else if (operations.at(l)->type ==
                                                          9)
                                                 { // ELSE x3
-                                                    verilogFile << "else begin" << std::endl;
+                                                    outFile << "else begin" << std::endl;
                                                     // FIXME
                                                     // FIXME
-                                                    verilogFile << "end" << std::endl;
+                                                    outFile << "end" << std::endl;
                                                 }
                                             }
                                         }
                                     }
                                     // FIXME
-                                    verilogFile << "end" << std::endl;
+                                    outFile << "end" << std::endl;
                                 }
                             }
                         }
                     }
-                    verilogFile << "                    "
+                    outFile << "                    "
                                 << "end";
                     break;
                 case 10:
-                    verilogFile << "//FOR ";
+                    outFile << "//FOR ";
                     break;
                 case 11:
-                    verilogFile << "//DIV ";
+                    outFile << "//DIV ";
                     break;
                 case 12:
-                    verilogFile << "//MOD ";
+                    outFile << "//MOD ";
                     break;
                 case 13:
-                    verilogFile << "//NOP ";
+                    outFile << "//NOP ";
                     break;
                 }
-                verilogFile << std::endl;
+                outFile << std::endl;
             }
         }
         if (i != latency)
         {
-            verilogFile << "                    "
+            outFile << "                    "
                         << "State <= S" << i << ";" << std::endl
                         << "                "
                         << "end" << std::endl;
         }
         else
         {
-            verilogFile << "                    "
+            outFile << "                    "
                         << "State <= Final;" << std::endl
                         << "                "
                         << "end" << std::endl;
         }
     }
-    verilogFile << "                "
+    // As per the answer in Piazza question @61
+    // 'Done' can be in the final or penultimate stat.
+    // It functionally wouldn't make any difference (apart from the extra state) since the assumption is that an external system waits for the done signal.
+    outFile << "                "
                 << "Final: begin" << std::endl;
-    verilogFile << "                    "
+    outFile << "                    "
                 << "Done <= 1;" << std::endl
                 << "                    "
                 << "State <= Wait;" << std::endl
@@ -1444,11 +1465,80 @@ int HLSM::processFile(const std::string &fileName, const std::string &outputName
                 << "end" << std::endl
                 << "endmodule" << std::endl;
 
-    std::cout << "DONE:" << outputName << std::endl
+    std::cout << "\nConversion successful: " << outName << std::endl
               << std::endl;
 
     inFile.close();
-    verilogFile.close();
+    outFile.close();
+}
 
-    return 0;
+
+void HLSM::convertToHLSM(const std::string &inName, const std::string &outName, int latency)
+{
+    std::ifstream inFile(inName, std::ifstream::in); // Creates an input file stream object and attempts to open the specified file in reading mode
+    std::ofstream outFile(outName, std::ofstream::out); // Creates an output file stream object and attempts to open the specified file for writing.
+
+    // Checks if the file can be successfully opened
+	// and if the file stream is in a good state for further operations like reading
+	// 
+    if (!inFile.is_open() && !inFile.good())
+    {
+        // Print out the inName
+		std::cerr << "Could not open cFile with the name: " << inName << std::endl;
+		exit(1); // Exit the program
+	}
+    
+	if (latency <= 0) // Check if the latency constraint is less than or equal to zero
+    {
+        // Print out the latency constraint value
+		std::cerr << "Invalid latency constraint: " << latency << std::endl;
+		exit(1); // Exit the program
+	}
+
+	// This if statement is used to test whether the outputfile extension is correct
+	// The expected outputfile extension is '.v'
+    // Wrong extension format or no extension specified at all will result in an error message
+	//
+	if (!outFile.is_open() && !outFile.good()) // Check if the output file can be opened and valid to write to
+	{
+		std::cerr << "Unable to open output file." << std::endl;
+		//return std::vector<std::string>();
+		exit(1);
+	}
+
+
+    // ██████╗ ██████╗ ███████╗    ██████╗ ██████╗  ██████╗  ██████╗███████╗███████╗███████╗    ██╗███╗   ██╗██████╗ ██╗   ██╗████████╗
+    // ██╔══██╗██╔══██╗██╔════╝    ██╔══██╗██╔══██╗██╔═══██╗██╔════╝██╔════╝██╔════╝██╔════╝    ██║████╗  ██║██╔══██╗██║   ██║╚══██╔══╝
+    // ██████╔╝██████╔╝█████╗█████╗██████╔╝██████╔╝██║   ██║██║     █████╗  ███████╗███████╗    ██║██╔██╗ ██║██████╔╝██║   ██║   ██║   
+    // ██╔═══╝ ██╔══██╗██╔══╝╚════╝██╔═══╝ ██╔══██╗██║   ██║██║     ██╔══╝  ╚════██║╚════██║    ██║██║╚██╗██║██╔═══╝ ██║   ██║   ██║   
+    // ██║     ██║  ██║███████╗    ██║     ██║  ██║╚██████╔╝╚██████╗███████╗███████║███████║    ██║██║ ╚████║██║     ╚██████╔╝   ██║   
+    // ╚═╝     ╚═╝  ╚═╝╚══════╝    ╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚══════╝╚══════╝    ╚═╝╚═╝  ╚═══╝╚═╝      ╚═════╝    ╚═╝   
+
+    parseInput(inFile, latency);
+
+
+    // ███████╗ ██████╗██╗  ██╗███████╗██████╗ ██╗   ██╗██╗     ███████╗  
+    // ██╔════╝██╔════╝██║  ██║██╔════╝██╔══██╗██║   ██║██║     ██╔════╝  
+    // ███████╗██║     ███████║█████╗  ██║  ██║██║   ██║██║     █████╗   
+    // ╚════██║██║     ██╔══██║██╔══╝  ██║  ██║██║   ██║██║     ██╔══╝   
+    // ███████║╚██████╗██║  ██║███████╗██████╔╝╚██████╔╝███████╗███████╗ 
+    // ╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝  ╚═════╝ ╚══════╝╚══════╝ 
+
+    cleanPredecessors(operations);
+
+    setALAPS(operations, latency);  // Create the ALAP graph
+
+    List_R(operations, latency);    // Perform List-R scheduling
+
+
+    // ██╗    ██╗██████╗ ██╗████████╗███████╗    ██╗   ██╗███████╗██████╗ ██╗██╗      ██████╗  ██████╗ 
+    // ██║    ██║██╔══██╗██║╚══██╔══╝██╔════╝    ██║   ██║██╔════╝██╔══██╗██║██║     ██╔═══██╗██╔════╝ 
+    // ██║ █╗ ██║██████╔╝██║   ██║   █████╗      ██║   ██║█████╗  ██████╔╝██║██║     ██║   ██║██║  ███╗
+    // ██║███╗██║██╔══██╗██║   ██║   ██╔══╝      ╚██╗ ██╔╝██╔══╝  ██╔══██╗██║██║     ██║   ██║██║   ██║
+    // ╚███╔███╔╝██║  ██║██║   ██║   ███████╗     ╚████╔╝ ███████╗██║  ██║██║███████╗╚██████╔╝╚██████╔╝
+    //  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝   ╚═╝   ╚══════╝      ╚═══╝  ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝ ╚═════╝  ╚═════╝ 
+
+    writeToVerilog(inFile, outFile, outName, latency);
+
+    return;
 }

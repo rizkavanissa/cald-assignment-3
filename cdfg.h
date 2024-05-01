@@ -1,5 +1,5 @@
-#ifndef SCHEDULER_H
-#define SCHEDULER_H
+#ifndef CDFG_H
+#define CDFG_H
 
 #include "operation.h"
 
