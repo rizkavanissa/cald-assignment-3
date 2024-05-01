@@ -13,10 +13,7 @@
 5. Rizka Vanissa Alifia - (ECE 474a)
 
 # Brief Description of the Program:
-This program is a converter that translates a behavior netlist text file 
-(commonly used format) into a Verilog file. Verilog is a hardware description 
-language widely used for designing digital circuits. This conversion tool enables 
-users to leverage existing behavior netlist files within a Verilog design flow.
+This program converts a C-like behavioral description into a scheduled one-procedure high-level statement machine (HLSM) description such that all sequential statements are scheduled using the List_R scheduling algorithm, which is implemented in Verilog.
 
 # Contribution of each group member to the assignment:
 1. Brandon John Lim Yung Chen
