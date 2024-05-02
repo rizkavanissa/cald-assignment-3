@@ -13,28 +13,33 @@
 5. Rizka Vanissa Alifia - (ECE 474a)
 
 # Brief Description of the Program:
-This program is a converter that translates a behavior netlist text file 
-(commonly used format) into a Verilog file. Verilog is a hardware description 
-language widely used for designing digital circuits. This conversion tool enables 
-users to leverage existing behavior netlist files within a Verilog design flow.
+This program converts a C-like behavioral description into a scheduled one-procedure high-level statement machine (HLSM) description such that all sequential statements are scheduled using the List_R scheduling algorithm, which is implemented in Verilog.
 
 # Contribution of each group member to the assignment:
 1. Brandon John Lim Yung Chen
-- Developing the dpgen.cpp
-- Developing Store separate net
+- Developing generation of HLSM and it's behaviour
+- Nesting if and else statement
+- Handling the LIST_R scheduling
 
 2. Moh Erwin Septianto 
-- Developing Setters
-- Testing the code
+- Developing basic idea of ALAP scheduling
+- Testing the code in ECE3
 
 3. Muhammad Nafis Aimanurrohman
 - Debugging the program
-- Developing the Getters
+- Providing feedback output in case of error happen
+- Testing in verilog
 
 4. Pieter Timothy
-- Developing the output part
+- Developing the output part, including file formating
 - CMake file
 
 5. Rizka Vanissa Alifia
-- Developing filter and store input
+- Developing filter, input store data, including reading file
 - Documentation of the program
+
+
+# Note for Running the Program
+During program execution, the error "Error: Performed ALAP scheduling failed" will appear in terminal after each conversion of verilog have been created.
+![error_behaviour](https://github.com/rizkavanissa/cald-assignment-3/assets/78137303/83082820-a253-4180-893a-90b6ab4946b0)
+However, it doesn't affect the result and we still get output as expected. 
