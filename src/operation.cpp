@@ -1,4 +1,5 @@
 #include "operation.h"
+#include "limits.h"
 
 // Default constructor
 Operation::Operation() : type(NOP), scheduledTime(0), scheduled(true), ALAPTime(INT_MAX), ALAPDone(false), id(0), compType(-1) {}
